@@ -1,15 +1,19 @@
 # MCP Server Development Guide
 
-This is an MCP (Model Context Protocol) server template for MCPize hosting platform.
+This is an MCP (Model Context Protocol) server template for the MCPize hosting platform.
 
 ## Project Structure
 
 ```
 ├── src/
-│   ├── index.ts      # Main server entry point
-│   └── tools.ts      # Pure tool functions (testable)
+│   ├── index.ts      # Main server entry point (Express & MCP Streamable HTTP transport)
+│   └── tools.ts      # Pure tool functions (testable, business logic only)
 ├── tests/
-│   └── tools.test.ts # Tool unit tests
+│   ├── tools.test.ts # Unit tests for pure tool functions
+│   └── server.test.ts# Integration tests for Express & MCP endpoints
+├── scripts/
+│   ├── smoke-test.js # End-to-end smoke test script
+│   └── post-init.js  # Template initialization script
 ├── package.json      # Dependencies and scripts
 ├── tsconfig.json     # TypeScript configuration
 ├── mcpize.yaml       # MCPize deployment manifest
@@ -20,111 +24,18 @@ This is an MCP (Model Context Protocol) server template for MCPize hosting platf
 
 ```bash
 npm install          # Install dependencies
-npm run dev          # Run in development mode with hot reload
-npm test             # Run tests with vitest
-npm run build        # Compile TypeScript to JavaScript
+npm run dev          # Run in development mode with hot reload (tsx)
+npm run typecheck    # Type-check without building
+npm test             # Run unit & integration tests with Vitest
+npm run build        # Clean dist and compile TypeScript
+npm run test:smoke   # Run smoke test against active server
 npm start            # Run compiled server
 ```
 
-## MCP SDK Usage
+## Architecture & Best Practices
 
-This server uses `@modelcontextprotocol/sdk` with Streamable HTTP transport.
-
-### Registering Tools
-
-```typescript
-server.registerTool(
-  "tool-name",
-  {
-    title: "Human-readable title",
-    description: "What this tool does",
-    inputSchema: {
-      param: z.string().describe("Parameter description"),
-    },
-    outputSchema: {
-      result: z.string(),
-    },
-  },
-  async ({ param }) => {
-    const output = { result: "computed value" };
-    return {
-      content: [{ type: "text", text: JSON.stringify(output) }],
-      structuredContent: output,
-    };
-  }
-);
-```
-
-### Registering Resources
-
-Resources provide data that fills the context window:
-
-```typescript
-server.registerResource(
-  "data",
-  "resource://data",
-  {
-    title: "Data Resource",
-    description: "Provides static or dynamic data",
-    mimeType: "application/json",
-  },
-  async (uri) => ({
-    contents: [{ uri: uri.href, text: JSON.stringify(data) }],
-  })
-);
-```
-
-### Registering Prompts
-
-```typescript
-server.registerPrompt(
-  "prompt-name",
-  { description: "Prompt description" },
-  async () => ({
-    messages: [{ role: "user", content: { type: "text", text: "..." } }],
-  })
-);
-```
-
-## MCPize Configuration
-
-The `mcpize.yaml` file controls deployment:
-
-- `runtime`: Server runtime (typescript, python, php)
-- `entry`: Main source file
-- `build.install`: Install command
-- `build.command`: Build command
-- `startCommand.type`: Transport type (http)
-- `configSchema.source`: Where to extract config schema from
-
-## Environment Variables
-
-- `PORT`: Server port (default: 8080, set by MCPize)
-- Add custom env vars in MCPize dashboard
-
-## Testing
-
-Use MCP Inspector to test your server:
-
-```bash
-npx @modelcontextprotocol/inspector
-```
-
-Connect to `http://localhost:8080/mcp` to test tools and resources.
-
-## Deployment
-
-Deploy using MCPize CLI:
-
-```bash
-mcpize deploy
-```
-
-## Best Practices
-
-1. **Tools vs Resources**: Use tools for actions, resources for data
-2. **Error Handling**: Always handle errors gracefully in tool handlers
-3. **Structured Output**: Return both `content` and `structuredContent`
-4. **Descriptions**: Write clear descriptions for all tools and parameters
-5. **Validation**: Use Zod schemas for input validation
-6. **Environment Variables**: Use `process.env` for configuration, never hardcode secrets
+1. **Pure Tools Separation**: Business logic lives in `src/tools.ts` with no MCP SDK dependencies, allowing fast, isolated unit testing.
+2. **Client Caching**: `getOctokit()` caches client instances to minimize API setup overhead.
+3. **Stateless HTTP Transport**: Uses `StreamableHTTPServerTransport` with fresh server instances per request as required by MCP stateless specification.
+4. **Structured Output**: MCP tools return both human-readable `content` text and machine-readable `structuredContent`.
+5. **Production Readiness**: Dev logging is disabled in production to eliminate body buffering and JSON parsing latency.

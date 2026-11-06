@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Octokit } from 'octokit';
 import {
   hello,
@@ -9,6 +9,8 @@ import {
   releaseNotes,
   addComment,
   createOctokit,
+  getOctokit,
+  resetOctokitCache,
 } from '../src/tools.js';
 
 describe('hello', () => {
@@ -123,6 +125,28 @@ describe('triageIssue', () => {
       labels: ['enhancement'],
     });
   });
+
+  it('skips addLabels call if the label is already present on the issue', async () => {
+    const addLabelsMock = vi.fn().mockResolvedValue({});
+    const mockClient = {
+      rest: {
+        issues: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              title: 'Critical bug',
+              body: 'fix now',
+              labels: [{ name: 'bug' }],
+            },
+          }),
+          addLabels: addLabelsMock,
+        },
+      },
+    } as unknown as Octokit;
+
+    const result = await triageIssue({ owner: 'owner', repo: 'repo', issue_number: 12 }, mockClient);
+    expect(result.label).toBe('bug');
+    expect(addLabelsMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('weeklyDigest', () => {
@@ -203,7 +227,7 @@ describe('releaseNotes', () => {
 });
 
 describe('addComment', () => {
-  it('posts a comment to the specified issue', async () => {
+  it('posts a comment to the specified issue with trimmed body', async () => {
     const createCommentMock = vi.fn().mockResolvedValue({});
     const mockClient = {
       rest: {
@@ -214,7 +238,7 @@ describe('addComment', () => {
     } as unknown as Octokit;
 
     const result = await addComment(
-      { owner: 'owner', repo: 'repo', issue_number: 42, body: 'Thanks for the report!' },
+      { owner: 'owner', repo: 'repo', issue_number: 42, body: '  Thanks for the report!  ' },
       mockClient
     );
     expect(result.status).toBe('success');
@@ -228,10 +252,32 @@ describe('addComment', () => {
   });
 });
 
-describe('createOctokit', () => {
+describe('createOctokit and getOctokit caching', () => {
+  beforeEach(() => {
+    resetOctokitCache();
+  });
+
   it('instantiates Octokit instance without throwing', () => {
     const client = createOctokit('test_token');
     expect(client).toBeDefined();
     expect(typeof client.rest.issues.listForRepo).toBe('function');
+  });
+
+  it('reuses cached Octokit instance when token is unchanged', () => {
+    process.env.GITHUB_TOKEN = 'test_token_cached';
+    const client1 = getOctokit();
+    const client2 = getOctokit();
+    expect(client1).toBe(client2);
+    delete process.env.GITHUB_TOKEN;
+  });
+
+  it('creates a new instance when token changes', () => {
+    process.env.GITHUB_TOKEN = 'token_a';
+    const client1 = getOctokit();
+    resetOctokitCache();
+    process.env.GITHUB_TOKEN = 'token_b';
+    const client2 = getOctokit();
+    expect(client1).not.toBe(client2);
+    delete process.env.GITHUB_TOKEN;
   });
 });

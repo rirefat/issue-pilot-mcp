@@ -27,3 +27,7 @@ npm-debug.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Testing & Coverage
+coverage/
+.vitest/

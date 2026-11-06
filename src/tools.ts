@@ -7,11 +7,53 @@ import { Octokit } from 'octokit';
  * This separation makes tools easy to unit test without MCP infrastructure.
  */
 
+// Cached default client instance to avoid instantiating Octokit on every request
+let defaultClient: Octokit | null = null;
+let cachedToken: string | undefined = undefined;
+
+/**
+ * Creates or retrieves a cached Octokit client.
+ * Using a singleton client prevents heavy object allocation and connection setup per call.
+ */
+export function getOctokit(token?: string): Octokit {
+  const authToken = token || process.env.GITHUB_TOKEN || process.env.GITHUB_PAT;
+  if (!token && defaultClient && cachedToken === authToken) {
+    return defaultClient;
+  }
+  const client = new Octokit({
+    auth: authToken || undefined,
+    userAgent: 'issue-pilot-mcp/1.0.0',
+    request: {
+      timeout: 10_000,
+    },
+  });
+  if (!token) {
+    defaultClient = client;
+    cachedToken = authToken;
+  }
+  return client;
+}
+
+/**
+ * Explicitly create a new Octokit instance (useful for testing or custom credentials).
+ */
 export function createOctokit(token?: string): Octokit {
   const authToken = token || process.env.GITHUB_TOKEN || process.env.GITHUB_PAT;
   return new Octokit({
     auth: authToken || undefined,
+    userAgent: 'issue-pilot-mcp/1.0.0',
+    request: {
+      timeout: 10_000,
+    },
   });
+}
+
+/**
+ * Reset cached Octokit client (primarily for testing).
+ */
+export function resetOctokitCache(): void {
+  defaultClient = null;
+  cachedToken = undefined;
 }
 
 // ============================================================================
@@ -67,7 +109,7 @@ export interface ListIssuesResult {
 
 export async function listIssues(
   params: ListIssuesParams,
-  client: Octokit = createOctokit()
+  client: Octokit = getOctokit()
 ): Promise<ListIssuesResult> {
   const { owner, repo, state = 'open', per_page = 10 } = params;
   const { data } = await client.rest.issues.listForRepo({
@@ -113,7 +155,7 @@ export interface TriageIssueResult {
 
 export async function triageIssue(
   params: TriageIssueParams,
-  client: Octokit = createOctokit()
+  client: Octokit = getOctokit()
 ): Promise<TriageIssueResult> {
   const { owner, repo, issue_number } = params;
   const { data: issue } = await client.rest.issues.get({
@@ -125,12 +167,21 @@ export async function triageIssue(
   const content = `${issue.title} ${issue.body || ''}`.toLowerCase();
   const label = content.includes('bug') ? 'bug' : 'enhancement';
 
-  await client.rest.issues.addLabels({
-    owner,
-    repo,
-    issue_number,
-    labels: [label],
+  // Optimization: Check if label already exists to avoid redundant GitHub API write call
+  const existingLabels = issue.labels ?? [];
+  const alreadyLabeled = existingLabels.some((l) => {
+    const name = typeof l === 'string' ? l : l.name;
+    return name?.toLowerCase() === label;
   });
+
+  if (!alreadyLabeled) {
+    await client.rest.issues.addLabels({
+      owner,
+      repo,
+      issue_number,
+      labels: [label],
+    });
+  }
 
   return {
     message: `Issue #${issue_number} labeled as: ${label}`,
@@ -154,7 +205,7 @@ export interface WeeklyDigestResult {
 
 export async function weeklyDigest(
   params: WeeklyDigestParams,
-  client: Octokit = createOctokit()
+  client: Octokit = getOctokit()
 ): Promise<WeeklyDigestResult> {
   const { owner, repo, days = 7 } = params;
   const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -164,6 +215,7 @@ export async function weeklyDigest(
     repo,
     state: 'all',
     since: sinceDate,
+    per_page: 100, // Fetch up to 100 updates to minimize incomplete activity counts
   });
 
   return {
@@ -195,7 +247,7 @@ export interface ReleaseNotesResult {
 
 export async function releaseNotes(
   params: ReleaseNotesParams,
-  client: Octokit = createOctokit()
+  client: Octokit = getOctokit()
 ): Promise<ReleaseNotesResult> {
   const { owner, repo, per_page = 10 } = params;
   const { data: pulls } = await client.rest.pulls.list({
@@ -203,6 +255,8 @@ export async function releaseNotes(
     repo,
     state: 'closed',
     per_page,
+    sort: 'updated',
+    direction: 'desc',
   });
 
   const mergedPrs: MergedPrItem[] = pulls
@@ -242,14 +296,15 @@ export interface AddCommentResult {
 
 export async function addComment(
   params: AddCommentParams,
-  client: Octokit = createOctokit()
+  client: Octokit = getOctokit()
 ): Promise<AddCommentResult> {
   const { owner, repo, issue_number, body } = params;
+  const trimmedBody = body.trim();
   await client.rest.issues.createComment({
     owner,
     repo,
     issue_number,
-    body,
+    body: trimmedBody,
   });
 
   return {

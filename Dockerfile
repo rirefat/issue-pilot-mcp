@@ -20,12 +20,15 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Set production environment for runtime optimizations
+ENV NODE_ENV=production
+
 # Copy built files and dependencies
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev --ignore-scripts
+# Install only production dependencies and clear cache
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # Run as non-root user (Cloud Run best practice)
 USER node

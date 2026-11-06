@@ -38,6 +38,16 @@ async function main() {
   console.log(
     `✓ Found ${tools.length} tool(s): ${tools.map((t) => t.name).join(", ")}`,
   );
+
+  // 4. Test tool call (echo)
+  const callRes = await rpc("tools/call", {
+    name: "echo",
+    arguments: { text: "smoke-test-verify" },
+  });
+  if (callRes.result?.structuredContent?.echo !== "smoke-test-verify") {
+    throw new Error("Tool execution failed");
+  }
+  console.log("✓ Tool call passed (echo)");
 }
 
 main().catch((err) => {
